@@ -1,0 +1,40 @@
+# Compiled source files
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual environments
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+*.DS_Store
+
+# Backup files
+*.bak
+*.swp
+*.tmp
