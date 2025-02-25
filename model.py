@@ -3,29 +3,34 @@ import torch
 import torch.nn.functional as F
 import warnings
 
+def stable_softmax(x):
+  """
+  Computes softmax in a numerically stable way.
+
+  Args:
+    x: A PyTorch tensor.
+
+  Returns:
+    A PyTorch tensor with softmax applied.
+  """
+  x_max = torch.max(x, dim=-1, keepdim=True)[0]
+  shifted_x = x - x_max
+  return F.softmax(shifted_x, dim=-1)
+
 class Net(nn.Module):
-    def __init__(self, num_masks):
+    def __init__(self, num_masks, dropout_probs=[0.5, 0.8]):
         super(Net, self).__init__()
         self.conv1 = nn.Conv2d(1, 16, 3, 1)
         self.conv2 = nn.Conv2d(16, 32, 3, 1)
 
 
-
         self.num_masks = num_masks
 
-        layer_sizes = [4608, 128, 10]
-        self.dropout1 = ConsistentMCDropout(num_masks=num_masks, input_shape=layer_sizes[1], p=0.5)
+        layer_sizes = [4608, 256, 10]
+        self.dropout1 = ConsistentMCDropout(p=dropout_probs[0])
         self.fc1 = nn.Linear(layer_sizes[0], layer_sizes[1])
-        self.dropout1 = ConsistentMCDropout(num_masks=num_masks, input_shape=layer_sizes[1], p=0.8)
+        self.dropout2 = ConsistentMCDropout(p=dropout_probs[1])
         self.fc2 = nn.Linear(layer_sizes[1], layer_sizes[2])
-
-        self.fcs = [self.fc1, self.fc2]
-
-        for i in range(num_masks):
-            mask = []
-            for j in range(1, len(layer_sizes) - 1):
-                mask.append(layer_sizes[j])
-            self.dropout_masks[i] = mask
         
 
     def forward(self, x, mask):
@@ -35,7 +40,6 @@ class Net(nn.Module):
 
         if mask > self.num_masks:
             warnings.warn("The provided mask exceeds the total number of masks added in as a parameter", UserWarning)
-        mask = self.dropout_masks[mask]
         x  = self.conv1(x)
         x = F.relu(x)
         x = self.conv2(x)
@@ -44,10 +48,10 @@ class Net(nn.Module):
         x = self.dropout1(x, mask)
         x = torch.flatten(x, start_dim=1)
         x = self.fc1(x)
-        x = F.relu()
+        x = F.relu(x)
         x = self.dropout2(x, mask)
-        x = self.fc2(x, mask=mask)
-        output = F.log_softmax(x, dim=1)
+        x = self.fc2(x)
+        output = (F.log_softmax(x, dim=1))
         return output
     
 
@@ -70,7 +74,7 @@ class _ConsistentMCDropoutMask(nn.Module):
         self.mask = None
 
     def _create_mask(self, input, num):
-        mask_shape = list((input.shape))
+        mask_shape = list((input.shape[1:]))
         mask = torch.empty(mask_shape, dtype=torch.bool, device=input.device).bernoulli_(self.p)
         self.mask_dict[num] = mask
         return mask
@@ -80,7 +84,7 @@ class _ConsistentMCDropoutMask(nn.Module):
             return input
         
         if m not in self.mask_dict:
-            self._create_mask(m)
+            self._create_mask(input=input, num=m)
         
         given_mask = self.mask_dict[m]
         mc_output = input.masked_fill(given_mask.unsqueeze(dim=0), 0) / (1 - self.p)
@@ -123,45 +127,45 @@ class ConsistentMCDropout(_ConsistentMCDropoutMask):
 
 
 class MCMC:
-	
-	def __init__(self, model: Net, num_masks, increment_amt):
+    def __init__(self, model: Net, num_masks, increment_amt):
+        self.model = model
+        self.num_masks = num_masks
+        self.ocurrences = torch.ones(num_masks, 1)
+        self.tot = sum(self.ocurrences)
+        # self.transition_probs = torch.ones(num_masks, 1)
+        self.increment_amt = increment_amt
+        self.previous = 1
+        self.dist = None
+        self.recalculate_dist()
 
-		self.model = model
-		self.num_masks = num_masks
-
-		self.ocurrences = torch.ones(num_masks, 1)
-		self.tot = sum(self.dist)
-		self.transition_probs = torch.ones(num_masks, 1)
-		self.increment_amt = increment_amt
-		self.previous = 1
-
-	def calculate_dist(self):
-		self.dist = self.ocurrences / self.tot
+    def recalculate_dist(self):
+        self.dist = self.ocurrences / self.tot
 
 
-	def increment(self, mask):
-		self.dist[mask] += self.increment_amt
-		self.tot += self.increment_amt
-		return self.dist
+    def increment(self, mask):
+        self.dist[mask] += self.increment_amt
+        self.tot += self.increment_amt
+        return self.dist
 
-	def calculate_liklihood(self, x, y, mask):
-		out = self.model.forward(x=x, mask=mask)
-		return out[y]
-		
-	def transition(self, x, y):
-		proposed_mask = torch.randint(0, self.num_masks, (1,))
-		ratio = self.calculate_liklihood(x=x, y=y, m=proposed_mask) / self.calculate_liklihood(x=x, y=y, m=self.previous)
-		acceptance_prob = torch.tensor([min(1, ratio * self.transition_prob[proposed_mask] / self.transition_probs[self.previous])])
-		accepted = torch.bernoulli(acceptance_prob).item()
-		if (accepted == 1):
-			self.previous = proposed_mask
-			self.increment(proposed_mask)
-		
-		self.calculate_dist()
+    def calculate_liklihood(self, x, y, mask):
+        out = self.model.forward(x=x, mask=mask)
+        return out[y]
+        
+    def transition(self, x, y):
+        proposed_mask = torch.randint(0, self.num_masks, (1,))
+        ratio = self.calculate_liklihood(x=x, y=y, m=proposed_mask) / self.calculate_liklihood(x=x, y=y, m=self.previous)
+        acceptance_prob = torch.tensor([min(1, ratio)])
+        # acceptance_prob = torch.tensor([min(1, ratio * self.transition_prob[proposed_mask] / self.transition_probs[self.previous])])
+        accepted = torch.bernoulli(acceptance_prob).item()
+        if (accepted == 1):
+            self.previous = proposed_mask
+            self.increment(proposed_mask)
+        
+        self.recalculate_dist()
 
-	def predict(self, x):
-		predictions = []
-		predictions = [self.model.forward(x.unsqueeze(0), mask=m).squeeze(dim=0) * self.num_masks for m in range(self.num_masks)]
-		prob_tensor = torch.cat(predictions, dim=0)
-		return torch.sum(prob_tensor, dim=0)
+    def predict(self, x):
+        predictions = []
+        predictions = [self.model.forward(x.unsqueeze(0), mask=m).squeeze(dim=0) * self.num_masks for m in range(self.num_masks)]
+        prob_tensor = torch.cat(predictions, dim=0)
+        return torch.sum(prob_tensor, dim=0)
 		
