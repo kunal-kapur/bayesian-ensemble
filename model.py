@@ -26,7 +26,7 @@ class Net(nn.Module):
             warnings.warn(f"The provided mask exceeds the total number of masks added, clipping to {self.num_masks - 1}", UserWarning)
         x  = self.fc1(x)
         x = F.relu(x)
-        # x = self.dropout1(x, mask)
+        x = self.dropout1(x, mask)
         x = self.fc2(x)
         output_logits = torch.log_softmax(x, dim=1) # compute numerically stable softmax for fitting
         return output_logits
@@ -50,21 +50,23 @@ class _ConsistentMCDropoutMask(nn.Module):
     def reset_mask(self):
         self.mask = None
 
-    def _create_mask(self, input: torch.Tensor, num: int):
-        """Create and store a dropout mask for a specific identifier (num)."""
-        mask_shape = input.shape[1:]  # Exclude batch dimension
-        mask = (torch.rand(mask_shape, device=input.device) < self.p)  # Boolean mask
+    def _create_mask(self, input, num):
+        mask_shape = list((input.shape[1:]))
+        mask = torch.empty(mask_shape, dtype=torch.bool, device=input.device).bernoulli_(self.p)
         self.mask_dict[num] = mask
+        return mask
 
     def forward(self, input: torch.Tensor, m: int):
         if self.p == 0:
             return input
-        
         if m not in self.mask_dict:
-            self._create_mask(input, m)
+            self._create_mask(input=input, num=m)
         
         given_mask = self.mask_dict[m]
-        return input * (~given_mask).unsqueeze(0) / (1 - self.p)  # Invert mask and apply scaling
+        mc_output = input.masked_fill(given_mask.unsqueeze(dim=0), 0) / (1 - self.p)
+        return mc_output
+    
+
 
     
 class ConsistentMCDropout(_ConsistentMCDropoutMask):
@@ -137,14 +139,35 @@ class MCMC:
         if (accepted == 1):
             self.previous = proposed_mask
             self.increment(proposed_mask)
+
+
+    def modify_distribution(self, keep_indices):
+
+        keep_indices = torch.tensor(keep_indices, dtype=torch.long)
+        mask = torch.zeros_like(self.dist, dtype=torch.bool)
+        mask[keep_indices] = True
+
+        new_dist = self.dist.detach().clone()
+        new_dist[~mask] = 0  # Zero out the probabilities of removed indices
+
+        new_dist[mask] /= new_dist[mask].sum()
+
+        return new_dist
+
+
         
 
-    def predict(self, x):
+    def predict(self, x, chosen_masks=None):
         if self.calculated is False:
             self.recalculate_dist()
             self.calculated = True
+        chosen_dist = self.dist
+
+        if chosen_masks is not None:
+            chosen_dist = self.modify_distribution(chosen_masks)
+
         predictions = []
-        predictions = [self.model.forward(x, mask=(m)) * self.dist[m] for m in range(self.num_masks)]
+        predictions = [self.model.forward(x, mask=(m)) * chosen_dist[m] for m in range(self.num_masks)]
         prob_tensor = torch.stack(predictions, dim=0)
         return torch.sum(prob_tensor, dim=0)
 		

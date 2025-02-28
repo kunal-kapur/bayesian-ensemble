@@ -4,6 +4,8 @@
 *.exe
 *.o
 *.so
+*.pth
+data/
 
 
 # Logs
