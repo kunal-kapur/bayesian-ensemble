@@ -45,6 +45,8 @@ Where chosen_masks is a tensor which contains the masks that are to be used. In 
 
 
 
+# Results
+See mask_training.ipynb for the training of the fixed-mask method.
 
 
 ### Shallow network results:
