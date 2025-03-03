@@ -49,6 +49,55 @@ class Net(nn.Module):
         return output_logits
     
 
+class NetV2(nn.Module):
+    def __init__(self, num_masks: int, dropout_probs: List[int]=[0.8]):
+        """Deeper model that incorporates the use of dropout-masks while training
+
+        Args:
+            num_masks (_type_): _description_
+            dropout_probs (list, optional): _description_. Defaults to [0.8].
+        """
+        super(NetV2, self).__init__()
+
+        self.num_masks = num_masks
+        layer_sizes = [784, 512, 256, 10]
+        self.fc1 = nn.Linear(layer_sizes[0], layer_sizes[1])
+        self.dropout1 = ConsistentMCDropout(p=dropout_probs[0])
+        self.fc2 = nn.Linear(layer_sizes[1], layer_sizes[2])
+        self.dropout2 = ConsistentMCDropout(p=dropout_probs[1])
+        self.fc3 = nn.Linear(layer_sizes[2], layer_sizes[3])
+        
+
+    def forward(self, x: torch.tensor, mask: int)->torch.Tensor:
+        """_summary_
+
+        Args:
+            x (torch.tensor): (batch_size x 784) input of flattenned MNIST image
+            mask (int): the dropout-mask to run the input through
+
+        Returns:
+            torch.Tensor: (batch_size x num_classes) tensor  of logits
+        """
+
+        mask = max(0, mask)
+        mask = min(self.num_masks - 1, mask)
+
+        if mask > self.num_masks:
+            warnings.warn("The provided mask is below 0. clipping to 0", UserWarning)
+
+        elif mask > self.num_masks:
+            warnings.warn(f"The provided mask exceeds the total number of masks added, clipping to {self.num_masks - 1}", UserWarning)
+        x  = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout1(x, mask)
+        x = self.fc2(x)
+        x = F.relu(x)
+        x = self.dropout2(x, mask)
+        x = self.fc3(x)
+        output_logits = torch.log_softmax(x, dim=1) # compute numerically stable softmax for fitting
+        return output_logits
+    
+
 class _ConsistentMCDropoutMask(nn.Module):
     """Module to apply apply dropout masks and record new types of dropout masks.
         Taken and modified from here: https://blackhc.github.io/batchbald_redux/consistent_mc_dropout.html
@@ -210,6 +259,8 @@ class MCMC:
 
     def predict(self, x: torch.Tensor, chosen_masks: torch.Tensor=None) -> torch.Tensor:
         """Uses weighted averaging of each mask to come up with a weighted prediction for the different masks
+            instead of randomly taking accepted samples from traditional MCMC in BNNs. This can be done since 
+            the space of our discrete masks is small and we can afford to calculate the likelihood of each mask.
 
         Args:
             x (torch.Tensor): (batch_size x *input_dim) input tensor for model
