@@ -12,10 +12,24 @@ For windows do
 ```console
 source ./.venv/scripts/activate
 ```
-Install packages (only ones for this one are torch and matplotlib)
+Install packages
 ```console
 pip install -r requirements.txt
 ```
+# Running train.py
+Here is the configuration for arguments on train.py
+
+| Argument           | Short | Type               | Default        | Required | Description                                                |
+|--------------------|-------|--------------------|----------------|----------|------------------------------------------------------------|
+| `--epochs`         | `-e`  | `int`              | `12`           | No       | Number of training epochs                                  |
+| `--batch_size`     | `-b`  | `int`              | `32`           | No       | Batch size for training                                    |
+| `--lr`             | `-l`  | `float`            | `0.001`        | No       | Learning rate                                              |
+| `--num_masks`      | `-nm` | `int`              | -              | Yes      | Number of masks                                            |
+| `--dropout_probs`  | `-dp` | `list of float`    | -              | Yes      | List of dropout probabilities (space-separated)            |
+| `--num_groups`     | `-ng` | `int`              | -              | Yes      | Number of groups for masks to divide amongst               |
+| `--increment_amt`  | `-i`  | `int`              | `1`            | No       | Amount to increment mask by in discrete distribution                                   |
+| `--path`           | `-p`  | `str`              | `"experiments"`| No       | Path to save experiment results                            |
+
 ## Training process for fixed-masks MCMC
  * The main model, Net and NetV2, is in model.py.
  * Each model consistents of a ConsistentMCDropout layer which allows for the use of fixed masks adopted from here: https://blackhc.github.io/batchbald_redux/consistent_mc_dropout.html 
