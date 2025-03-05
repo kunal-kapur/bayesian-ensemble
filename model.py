@@ -198,7 +198,9 @@ class MCMC:
     def recalculate_dist(self):
         """calculates the distriubtion of probabilities of each mask
         """
+        self.calculated = True
         self.dist = (self.ocurrences / self.tot).squeeze(dim=1)
+        return self.dist
 
 
     def increment(self, mask: int):
@@ -271,7 +273,6 @@ class MCMC:
         """
         if self.calculated is False:
             self.recalculate_dist()
-            self.calculated = True
         chosen_dist = self.dist
 
         if chosen_masks is not None:
