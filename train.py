@@ -46,6 +46,11 @@ num_groups = args.num_groups
 increment_amt = args.increment_amt
 PATH = os.path.join(args.path, f"numMasks{num_masks}_numGroups{num_groups}_dropout_probs{dropout_probs}_increment_amt{increment_amt}")
 
+if not os.path.exists(PATH):
+    os.makedirs(PATH, exist_ok=True)
+
+
+
 print(f"Epochs: {EPOCHS}")
 print(f"Batch Size: {BATCH_SIZE}")
 print(f"Learning Rate: {LR}")
@@ -58,15 +63,10 @@ SEED = 42
 torch.manual_seed(SEED)
 
 
-def create_dirs(path, num_masks, dropout_probs):
-    if not os.path.exists(path):
-        os.makedirs(os.path.join(path, f"masks_{num_masks}", f"dropout_probs_{dropout_probs}"))
-
 def unpack_arguments(**kwargs):
     return kwargs.get("batch_size", 32), kwargs.get("epochs", 12), kwargs.get("lr", 0.001)
 
 
-create_dirs(path=PATH, num_masks=num_masks, dropout_probs=dropout_probs)
 
 indices = torch.randperm(len(dataset1)).tolist()  # Shuffled once
 # Use SubsetRandomSampler to keep the same shuffle order on each epoch for the over-fitting step
@@ -145,8 +145,20 @@ plt.legend()
 plt.savefig(os.path.join(PATH, "acc_per_mask.png"))
 
 # Save results to a CSV file
-df = pd.DataFrame({"num_masks": tot_masks_used, "test_accuracy": test_acc})
-df.to_csv(os.path.join(PATH, "test_accuracy_results.csv"), index=True)
+df = pd.DataFrame({
+    "num_masks": tot_masks_used,
+    "test_accuracy": test_acc,
+    "EPOCHS": [EPOCHS] * len(tot_masks_used),
+    "BATCH_SIZE": [BATCH_SIZE] * len(tot_masks_used),
+    "LR": [LR] * len(tot_masks_used),
+    "dropout_probs1": [dropout_probs[0]] * len(tot_masks_used),
+    "dropout_probs2": [dropout_probs[1]] * len(tot_masks_used),
+    "num_groups": [num_groups] * len(tot_masks_used),
+    "increment_amt": [increment_amt] * len(tot_masks_used),
+})
 
-print("Results saved to test_accuracy_results.csv")
+csv_path = os.path.join(PATH, "results.csv")
+df.to_csv(csv_path, index=False)
+
+print(f"Saved results to {csv_path}")
 
