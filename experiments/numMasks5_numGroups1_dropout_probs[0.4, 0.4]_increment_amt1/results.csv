@@ -1,0 +1,5 @@
+num_masks,test_accuracy,EPOCHS,BATCH_SIZE,LR,dropout_probs1,dropout_probs2,num_groups,increment_amt
+1,0.8697,12,32,0.001,0.4,0.4,1,1
+2,0.886,12,32,0.001,0.4,0.4,1,1
+4,0.8838,12,32,0.001,0.4,0.4,1,1
+5,0.8848,12,32,0.001,0.4,0.4,1,1
