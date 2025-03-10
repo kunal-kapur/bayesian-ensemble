@@ -41,6 +41,18 @@ predict(x, chosen_masks)
 Where chosen_masks is a tensor which contains the masks that are to be used. In this case, these masks will 'absorb' the probability from the unused masks to make up the distribution
 * On inference, we can use the weighted average of which masks that are accepted instead sampling from accepted samples; this is because we are dealing with a smaller and discrete distirbution
   
+## train.py arguements:
+
+| Argument            | Short Flag | Type    | Default Value   | Required | Description                                      |
+|---------------------|-------------|---------|-----------------|-----------|--------------------------------------------------|
+| `--epochs`           | `-e`         | `int`   | `12`             | No        | Number of training epochs                         |
+| `--batch_size`       | `-b`         | `int`   | `32`             | No        | Batch size for training                           |
+| `--lr`               | `-l`         | `float` | `0.001`          | No        | Learning rate                                      |
+| `--num_masks`        | `-nm`        | `int`   | N/A              | **Yes**   | Number of masks to train on                         |
+| `--dropout_probs`    | `-dp`        | `float` | N/A              | **Yes**   | List of dropout probabilities (need 2)                      |
+| `--num_groups`       | `-ng`        | `int`   | N/A              | **Yes**   | Number of partitions in training data. Each mask trains on a single partition        |
+| `--increment_amt`      | `-i`         | `int`   | `1`              | No        | Amount to increment a distribution by when accepted                              |
+| `--path`             | `-p`         | `str`   | `"experiments"`  | No        | Path to place experiment in                         |
 
 
 
