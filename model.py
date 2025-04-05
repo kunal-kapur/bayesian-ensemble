@@ -60,13 +60,29 @@ class NetV2(nn.Module):
         super(NetV2, self).__init__()
 
         self.num_masks = num_masks
-        layer_sizes = [784, 512, 256, 10]
+        layer_sizes = [784, 1024, 512, 10]
         self.fc1 = nn.Linear(layer_sizes[0], layer_sizes[1])
         self.dropout1 = ConsistentMCDropout(p=dropout_probs[0])
         self.fc2 = nn.Linear(layer_sizes[1], layer_sizes[2])
         self.dropout2 = ConsistentMCDropout(p=dropout_probs[1])
         self.fc3 = nn.Linear(layer_sizes[2], layer_sizes[3])
+
+
+    def state_dict(self, *args, **kwargs):
+        state = super().state_dict(*args, **kwargs)
+        state['dropout1_mask_dict'] = self.dropout1.mask_dict
+        state['dropout2_mask_dict'] = self.dropout2.mask_dict
+        return state
         
+    def load_state_dict(self, state_dict, *args, **kwargs):
+        dropout1_masks = state_dict.pop('dropout1_mask_dict', {})
+        dropout2_masks = state_dict.pop('dropout2_mask_dict', {})
+        
+        super().load_state_dict(state_dict, *args, **kwargs)
+        
+        # Restore masks
+        self.dropout1.mask_dict = dropout1_masks
+        self.dropout2.mask_dict = dropout2_masks
 
     def forward(self, x: torch.tensor, mask: int)->torch.Tensor:
         """_summary_
@@ -151,6 +167,26 @@ class _ConsistentMCDropoutMask(nn.Module):
         given_mask = self.mask_dict[m]
         mc_output = input.masked_fill(given_mask.unsqueeze(dim=0), 0) / (1 - self.p)
         return mc_output
+    
+    def get_majority_vote_mask(self, threshold=0.5):
+        """
+        Perform majority voting across all masks in mask_dict.
+        
+        Args:
+            mask_dict: Dictionary of {index: mask_tensor} where mask_tensor is 1 for kept neurons
+            threshold: Fraction of masks where neuron must be kept (default: >50%)
+        
+        Returns:
+            Consolidated mask where neurons are kept if they appear in majority of masks
+        """
+        all_masks = torch.stack(list(self.mask_dict.values()))
+        
+        keep_counts = all_masks.sum(dim=0)
+        
+        num_masks = all_masks.shape[0]
+        majority_mask = (keep_counts / num_masks) > threshold
+        
+        return majority_mask.float()
     
 
 
