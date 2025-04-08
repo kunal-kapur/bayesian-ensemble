@@ -12,7 +12,6 @@ class NetNormalDropout(nn.Module):
         self.dropout1 = nn.Dropout1d(p=0.2)
         self.fc2 = nn.Linear(layer_sizes[1], layer_sizes[2])
         
-
     def forward(self, x):
 
         x  = self.fc1(x)

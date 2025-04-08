@@ -60,12 +60,12 @@ class NetV2(nn.Module):
         super(NetV2, self).__init__()
 
         self.num_masks = num_masks
-        layer_sizes = [784, 1024, 512, 10]
-        self.fc1 = nn.Linear(layer_sizes[0], layer_sizes[1])
+        self.conv1 = nn.Conv2d(1, 32, 3, 1)
+        self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = ConsistentMCDropout(p=dropout_probs[0])
-        self.fc2 = nn.Linear(layer_sizes[1], layer_sizes[2])
-        self.dropout2 = ConsistentMCDropout(p=dropout_probs[1])
-        self.fc3 = nn.Linear(layer_sizes[2], layer_sizes[3])
+        self.dropout2 = nn.Dropout(p=dropout_probs[1])
+        self.fc1 = nn.Linear(9216, 128)
+        self.fc2 = nn.Linear(128, 10)
 
 
     def state_dict(self, *args, **kwargs):
@@ -167,26 +167,7 @@ class _ConsistentMCDropoutMask(nn.Module):
         given_mask = self.mask_dict[m]
         mc_output = input.masked_fill(given_mask.unsqueeze(dim=0), 0) / (1 - self.p)
         return mc_output
-    
-    def get_majority_vote_mask(self, threshold=0.5):
-        """
-        Perform majority voting across all masks in mask_dict.
-        
-        Args:
-            mask_dict: Dictionary of {index: mask_tensor} where mask_tensor is 1 for kept neurons
-            threshold: Fraction of masks where neuron must be kept (default: >50%)
-        
-        Returns:
-            Consolidated mask where neurons are kept if they appear in majority of masks
-        """
-        all_masks = torch.stack(list(self.mask_dict.values()))
-        
-        keep_counts = all_masks.sum(dim=0)
-        
-        num_masks = all_masks.shape[0]
-        majority_mask = (keep_counts / num_masks) > threshold
-        
-        return majority_mask.float()
+
     
 
 

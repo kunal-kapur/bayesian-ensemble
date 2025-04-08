@@ -15,7 +15,7 @@ plt.bar(categories, accuracies)
 plt.xlabel('Categories')
 plt.ylabel('Accuracy (%)')
 plt.title('Accuracy of Different Models with deeper network')
-plt.ylim(0.75, 1)
+plt.ylim(0.85, 1)
 
 # Show values on top of bars
 for i, acc in enumerate(accuracies):
