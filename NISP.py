@@ -5,12 +5,13 @@ from model import ConsistentMCDropout  # Assuming this is a custom module you ha
 
 
 class NISP:
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module, dropout_dict, resize_dict):
         self.model = model
         self.importance_scores = {}
+        self.dropout_dict = dropout_dict
+        self.resize_dict = resize_dict
 
-    def compute_aggregated_importance_scores(self, dropout_layers: Dict[str, ConsistentMCDropout],
-                                             final_layer_scores: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+    def compute_aggregated_importance_scores(self) -> Dict[str, torch.Tensor]:
         """
         Compute NISP scores averaged across dropout masks.
 
@@ -24,13 +25,11 @@ class NISP:
         aggregated_scores = {}
 
         # Assume all masks have the same keys (same number of masks)
-        mask_keys = list(next(iter(dropout_layers.values())).mask_dict.keys())
+        mask_keys = list(next(iter(self.dropout_dict.values())).mask_dict.keys())
 
         for mask_id in mask_keys:
             scores = self.compute_importance_scores_for_mask(
-                dropout_layers=dropout_layers,
                 mask_id=mask_id,
-                final_layer_scores=final_layer_scores
             )
 
             for layer_name, score in scores.items():
@@ -45,14 +44,12 @@ class NISP:
 
         return self.importance_scores
 
-    def compute_importance_scores_for_mask(self, dropout_layers: Dict[str, ConsistentMCDropout],
-                                           mask_id: int,
-                                           final_layer_scores: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+    def compute_importance_scores_for_mask(self, mask_id: int) -> Dict[str, torch.Tensor]:
         """
         Compute importance scores for a single dropout mask.
 
         Args:
-            dropout_layers: dict mapping layer names to dropout modules
+
             mask_id: which mask index to use
             final_layer_scores: optional tensor for final layer importance
 
@@ -61,36 +58,82 @@ class NISP:
         """
         # Collect and reverse layer order
         layers = [(name, module) for name, module in self.model.named_modules()
-                  if isinstance(module, (nn.Linear, nn.Conv2d))]
+                  if isinstance(module, (nn.Linear, nn.Conv2d, nn.MaxPool2d, nn.Flatten))]
+        
         layers.reverse()
 
         importance_scores = {}
 
-        # Initialize with uniform score if not provided
-        if final_layer_scores is None:
-            final_layer = layers[0][1]
-            if isinstance(final_layer, nn.Linear):
-                importance_scores[layers[0][0]] = torch.ones(final_layer.out_features)
-            else:
-                importance_scores[layers[0][0]] = torch.ones(final_layer.out_channels)
-        else:
-            importance_scores[layers[0][0]] = final_layer_scores
+        # Initialize with uniform score in final layer
 
+        final_layer = layers[0][1]
+        if isinstance(final_layer, nn.Linear):
+            importance_scores[layers[0][0]] = torch.ones(final_layer.out_features)
+        elif isinstance(final_layer, nn.Conv2d):
+            importance_scores[layers[0][0]] = torch.ones(final_layer.out_channels)
+
+
+        transforms = []
+        print(layers)
         for i in range(1, len(layers)):
+
             curr_name, curr_module = layers[i]
             prev_name, prev_module = layers[i - 1]
 
-            # Get dropout mask (or all-ones if not found)
-            if prev_name in dropout_layers:
-                mask = dropout_layers[prev_name].mask_dict[mask_id].float()
+            print(curr_name, prev_name)
+            print(curr_module, prev_module)
+                        # Get dropout mask (or all-ones if not found)
+            if prev_name in self.dropout_dict:
+                mask = self.dropout_dict[prev_name].mask_dict[mask_id].float()
             else:
                 mask = torch.ones_like(importance_scores[prev_name])
+            
+            if isinstance(prev_module, nn.Flatten):
+                # Handle flatten layer
+                if prev_name in self.resize_dict:
+                    prev_scores = importance_scores[prev_name]
+                    curr_scores = (prev_scores * mask).view(self.resize_dict[prev_name])
+                    importance_scores[curr_name] = curr_scores
+                continue
+            elif isinstance(prev_module, nn.MaxPool2d):
+                if prev_name in self.resize_dict:
+                    prev_scores = importance_scores[prev_name]
+                    curr_scores = torch.nn.functional.max_unpool2d(
+                        prev_scores * mask, self.model.pool_indices['pool'].squeeze(dim=0), prev_module.kernel_size,
+                        prev_module.stride, prev_module.padding
+                    )
+                    importance_scores[curr_name] = curr_scores
+                continue
+
 
             weights = prev_module.weight
             if isinstance(prev_module, nn.Conv2d):
-                weights = weights.view(weights.size(0), -1)
+                weights = prev_module.weight  # [64, 32, 3, 3]
+                out_channels, in_channels, kH, kW = weights.shape
+                weights_flat = weights.view(out_channels, -1)
+
+                # Get the output importance scores (e.g., from next layer)
+                prev_scores = importance_scores[prev_name]
+                masked_scores = prev_scores * mask
+
+                 # Reduce spatial map to get per-output-channel score: [64
+                reduced_scores = masked_scores.sum(dim=(1, 2))
+                print("reducing", masked_scores.shape, reduced_scores.shape)
+
+                input_scores_flat = torch.matmul(torch.abs(weights_flat.T), reduced_scores)  # [288]
+
+                # Reshape to [in_channels, kH, kW]
+                input_scores = input_scores_flat.view(in_channels, kH, kW)
+
+                # Optionally reduce to per-channel importance
+                input_channel_scores = input_scores.sum(dim=(1, 2))  # [in_channels]
+
+                importance_scores[curr_name] = input_channel_scores
+                continue
 
             prev_scores = importance_scores[prev_name]
+
+            
             curr_scores = torch.matmul(torch.abs(weights.T), prev_scores * mask)
 
             importance_scores[curr_name] = curr_scores
