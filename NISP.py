@@ -81,7 +81,6 @@ class NISP:
             curr_name, curr_module = layers[i]
             prev_name, prev_module = layers[i - 1]
 
-            print(curr_name, prev_name)
                         # Get dropout mask (or all-ones if not found)
             if prev_name in self.dropout_dict:
                 mask = self.dropout_dict[prev_name].mask_dict[mask_id].squeeze(dim=0).float()
@@ -152,7 +151,7 @@ class NISP:
 
         return mask
     
-    def apply_nisp_pruning(model: nn.Module, layer_name: str, neuron_mask: torch.Tensor):
+    def apply_nisp_pruning(self, model: nn.Module, layer_name: str, neuron_mask: torch.Tensor):
         """
         Applies structured pruning to a given layer using a neuron-wise mask.
         Supports both nn.Linear and nn.Conv2d layers.

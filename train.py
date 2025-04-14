@@ -11,11 +11,22 @@ import os
 import argparse
 import math
 import pandas as pd
+from NISP import NISP
+
+
+def prune_func(model, nisp: NISP):
+    """
+    Prune the model based on NISP scores.
+    """
+    importance_scores = nisp.compute_aggregated_importance_scores()
+    mask = nisp.get_pruning_mask(scores=importance_scores, threhold=0.5)
+
+
+
 
 transform = transforms.Compose([
-    transforms.RandomRotation(degrees=180),
-    transforms.ToTensor(), transforms.GaussianBlur(kernel_size=7, sigma=(4, 5)),  # Stronger blur
-    transforms.Lambda(lambda x: torch.flatten(x)),
+    transforms.RandomAffine(degrees=35, translate=(0.1, 0.1)),  # small rotation and shift
+    transforms.ToTensor(),
 ])
 
 dataset1 = datasets.MNIST('data', train=True, download=True,
@@ -28,7 +39,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-e', "--epochs", type=int, default=12, help="Number of training epochs")    
 parser.add_argument('-b', "--batch_size", type=int, default=32, help="Batch size for training")    
 parser.add_argument('-l', "--lr", type=float, default=0.001, help="Learning rate")
-parser.add_argument('-nm', "--num_masks", type=int, required=True, help="Number of masks")   
+parser.add_argument('-nm', "--num_masks", type=int, default=10,  required=True, help="Number of masks")   
 parser.add_argument('-dp', "--dropout_probs", type=float, nargs='+', required=True, help="List of dropout probabilities")
 parser.add_argument('-ng', "--num_groups", type=int, required=True, help="Number of groups for masks to divide amongst")
 parser.add_argument('-i', "--increment_amt", type=int, default=1, help="amount to increment by")
@@ -49,8 +60,6 @@ PATH = os.path.join(args.path, f"numMasks{num_masks}_numGroups{num_groups}_dropo
 if not os.path.exists(PATH):
     os.makedirs(PATH, exist_ok=True)
 
-
-
 print(f"Epochs: {EPOCHS}")
 print(f"Batch Size: {BATCH_SIZE}")
 print(f"Learning Rate: {LR}")
@@ -69,7 +78,6 @@ def unpack_arguments(**kwargs):
 
 
 indices = torch.randperm(len(dataset1)).tolist()  # Shuffled once
-# Use SubsetRandomSampler to keep the same shuffle order on each epoch for the over-fitting step
 sampler = SequentialSampler(indices)  # Keeps the order fixed
 train_dataloader = DataLoader(dataset1, batch_size=BATCH_SIZE, sampler=sampler)
 test_dataloader = DataLoader(dataset2, batch_size=1)
@@ -80,7 +88,6 @@ opt = Adam(model.parameters(), lr=LR)
 lossFn = torch.nn.NLLLoss() # Use NLL since we our model is outputting a probability
 mask_groups = [list(range(i, num_masks, num_groups)) for i in range(num_groups)]  # Partition masks
 
-print("Beginning Training\n")
 for epoch in tqdm(range(EPOCHS)):
     model.train()
     trainCorrect = 0
