@@ -66,7 +66,7 @@ class NetV2(nn.Module):
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.dropout1 = ConsistentMCDropout(p=dropout_probs[0])
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.pool = nn.MaxPool2d(2, 2, return_indices=True)
+        self.pool = nn.MaxPool2d(2, 2)
         
         self.flat = nn.Flatten()
         self.fc1 = nn.Linear(9216, 128)
@@ -115,8 +115,7 @@ class NetV2(nn.Module):
         x = F.relu(x)
         x = self.dropout1(x, mask)
         # print("prepooling", x.shape)
-        x, indices = self.pool(x)
-        self.pool_indices['pool'] = indices
+        x = self.pool(x)
         # print("preflattening", x.shape)
         x = self.flat(x)
         x = self.fc1(x)
@@ -156,13 +155,20 @@ class _ConsistentMCDropoutMask(nn.Module):
         Returns:
            torch.tensor: mask for of where 0s will be added for this particular dropout layer
         """
-
         if input.dim() == 0:
             raise ValueError("Scalar inputs cannot be masked")
 
+        elif input.dim() == 2:
+            feature_mask = torch.empty(input.shape[1], dtype=torch.bool, device=input.device).bernoulli_(1 - self.p)
+            mask = feature_mask.view(1, -1)
 
-        mask_shape = list((input.shape[1:]))
-        mask = torch.empty(mask_shape, dtype=torch.bool, device=input.device).bernoulli_(self.p)
+        elif input.dim() == 4:
+            channel_mask = torch.empty(input.shape[1], dtype=torch.bool, device=input.device).bernoulli_(1 - self.p)
+            mask = channel_mask.view(1, -1, 1, 1)
+
+        else:
+            raise ValueError(f"Unsupported input shape: {input.shape}")
+
         self.mask_dict[num] = mask
         return mask
 
@@ -182,7 +188,7 @@ class _ConsistentMCDropoutMask(nn.Module):
             self._create_mask(input=input, num=m)
         
         given_mask = self.mask_dict[m]
-        mc_output = input.masked_fill(given_mask.unsqueeze(dim=0), 0) / (1 - self.p)
+        mc_output = input.masked_fill(given_mask, 0) / (1 - self.p)
         return mc_output
 
     

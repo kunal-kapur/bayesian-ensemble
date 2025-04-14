@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from typing import Dict
 from model import ConsistentMCDropout  # Assuming this is a custom module you have
+from torch.nn.utils import prune
 
 
 class NISP:
@@ -38,6 +39,7 @@ class NISP:
                 aggregated_scores[layer_name].append(score)
 
         # Aggregate (e.g., mean)
+
         self.importance_scores = {
             layer: torch.stack(scores).mean(dim=0) for layer, scores in aggregated_scores.items()
         }
@@ -58,7 +60,7 @@ class NISP:
         """
         # Collect and reverse layer order
         layers = [(name, module) for name, module in self.model.named_modules()
-                  if isinstance(module, (nn.Linear, nn.Conv2d, nn.MaxPool2d, nn.Flatten))]
+                  if isinstance(module, (nn.Linear, nn.Conv2d, nn.Flatten))]
         
         layers.reverse()
 
@@ -74,17 +76,15 @@ class NISP:
 
 
         transforms = []
-        print(layers)
         for i in range(1, len(layers)):
 
             curr_name, curr_module = layers[i]
             prev_name, prev_module = layers[i - 1]
 
             print(curr_name, prev_name)
-            print(curr_module, prev_module)
                         # Get dropout mask (or all-ones if not found)
             if prev_name in self.dropout_dict:
-                mask = self.dropout_dict[prev_name].mask_dict[mask_id].float()
+                mask = self.dropout_dict[prev_name].mask_dict[mask_id].squeeze(dim=0).float()
             else:
                 mask = torch.ones_like(importance_scores[prev_name])
             
@@ -93,16 +93,18 @@ class NISP:
                 if prev_name in self.resize_dict:
                     prev_scores = importance_scores[prev_name]
                     curr_scores = (prev_scores * mask).view(self.resize_dict[prev_name])
+                    curr_scores = curr_scores.sum(dim=(1,2))
+                    curr_scores = curr_scores.view(-1, 1 , 1)
                     importance_scores[curr_name] = curr_scores
                 continue
             elif isinstance(prev_module, nn.MaxPool2d):
                 if prev_name in self.resize_dict:
                     prev_scores = importance_scores[prev_name]
-                    curr_scores = torch.nn.functional.max_unpool2d(
-                        prev_scores * mask, self.model.pool_indices['pool'].squeeze(dim=0), prev_module.kernel_size,
-                        prev_module.stride, prev_module.padding
-                    )
-                    importance_scores[curr_name] = curr_scores
+                    # curr_scores = torch.nn.functional.max_unpool2d(
+                    #     prev_scores * mask, self.model.pool_indices['pool'].squeeze(dim=0), prev_module.kernel_size,
+                    #     prev_module.stride, prev_module.padding
+                    # )
+                    importance_scores[curr_name] = prev_scores
                 continue
 
 
@@ -110,25 +112,13 @@ class NISP:
             if isinstance(prev_module, nn.Conv2d):
                 weights = prev_module.weight  # [64, 32, 3, 3]
                 out_channels, in_channels, kH, kW = weights.shape
-                weights_flat = weights.view(out_channels, -1)
+                weights_flat = weights.sum(dim=(2, 3))
 
                 # Get the output importance scores (e.g., from next layer)
                 prev_scores = importance_scores[prev_name]
-                masked_scores = prev_scores * mask
-
-                 # Reduce spatial map to get per-output-channel score: [64
-                reduced_scores = masked_scores.sum(dim=(1, 2))
-                print("reducing", masked_scores.shape, reduced_scores.shape)
-
-                input_scores_flat = torch.matmul(torch.abs(weights_flat.T), reduced_scores)  # [288]
-
-                # Reshape to [in_channels, kH, kW]
-                input_scores = input_scores_flat.view(in_channels, kH, kW)
-
-                # Optionally reduce to per-channel importance
-                input_channel_scores = input_scores.sum(dim=(1, 2))  # [in_channels]
-
-                importance_scores[curr_name] = input_channel_scores
+                masked_scores = (prev_scores * mask).squeeze()
+                input_scores_flat = torch.matmul(torch.abs(weights_flat.T), masked_scores)  # [288]
+                importance_scores[curr_name] = input_scores_flat.view(in_channels, 1, 1)
                 continue
 
             prev_scores = importance_scores[prev_name]
@@ -151,6 +141,7 @@ class NISP:
         Returns:
             torch.Tensor: Binary mask with 1s for kept neurons.
         """
+        scores = scores.squeeze()
         k = int(scores.numel() * (1 - pruning_rate))
         if k <= 0:
             return torch.zeros_like(scores, dtype=torch.bool)
@@ -160,3 +151,27 @@ class NISP:
         mask = scores >= threshold
 
         return mask
+    
+    def apply_nisp_pruning(model: nn.Module, layer_name: str, neuron_mask: torch.Tensor):
+        """
+        Applies structured pruning to a given layer using a neuron-wise mask.
+        Supports both nn.Linear and nn.Conv2d layers.
+
+        Args:
+            model: The PyTorch model.
+            layer_name: Name of the layer to prune (e.g., 'fc1' or 'conv1').
+            neuron_mask: 1D tensor with 1s for neurons/channels to keep, 0s to prune.
+        """
+        layer = dict(model.named_modules())[layer_name]
+        
+        if isinstance(layer, nn.Conv2d):
+            weight_mask = neuron_mask[:, None, None, None].expand_as(layer.weight.data)
+        elif isinstance(layer, nn.Linear):
+            weight_mask = neuron_mask[:, None].expand_as(layer.weight.data)
+        else:
+            raise TypeError(f"Unsupported layer type: {type(layer)}")
+
+        prune.CustomFromMask.apply(layer, name='weight', mask=weight_mask)
+        if layer.bias is not None:
+            bias_mask = neuron_mask.clone()
+            prune.CustomFromMask.apply(layer, name='bias', mask=bias_mask)
