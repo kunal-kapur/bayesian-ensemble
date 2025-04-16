@@ -142,8 +142,6 @@ class _ConsistentMCDropoutMask(nn.Module):
     def extra_repr(self):
         return "p={}".format(self.p)
 
-    def reset_mask(self):
-        self.mask = None
 
     def _create_mask(self, input: torch.tensor, num: int) -> torch.Tensor:
         """generates mask and adds to collection of fixed masks
@@ -159,11 +157,13 @@ class _ConsistentMCDropoutMask(nn.Module):
             raise ValueError("Scalar inputs cannot be masked")
 
         elif input.dim() == 2:
-            feature_mask = torch.empty(input.shape[1], dtype=torch.bool, device=input.device).bernoulli_(1 - self.p)
+            # For feature dropout (fully connected layers)
+            feature_mask = torch.empty(input.shape[1], device=input.device).bernoulli_(1 - self.p)
             mask = feature_mask.view(1, -1)
 
         elif input.dim() == 4:
-            channel_mask = torch.empty(input.shape[1], dtype=torch.bool, device=input.device).bernoulli_(1 - self.p)
+            # For channel dropout (CNN layers)
+            channel_mask = torch.empty(input.shape[1], device=input.device).bernoulli_(1 - self.p)
             mask = channel_mask.view(1, -1, 1, 1)
 
         else:
@@ -182,14 +182,12 @@ class _ConsistentMCDropoutMask(nn.Module):
         Returns:
             torch.Tensor: resulting output of running through dropout layer
         """
-        if self.p == 0:
-            return input
         if m not in self.mask_dict:
             self._create_mask(input=input, num=m)
         
-        given_mask = self.mask_dict[m]
-        mc_output = input.masked_fill(given_mask, 0) / (1 - self.p)
-        return mc_output
+        mask = self.mask_dict[m]
+        output = (input * mask) / (1 - self.p)
+        return output
 
     
 

@@ -18,6 +18,7 @@ import csv
 import argparse
 
 timestamp = time.strftime("%Y-%m-%d--%H-%M-%S")
+print("Timestamp", timestamp)
 EXPERIMENT_FOLDER = f"experiments/{timestamp}"
 if not os.path.exists(EXPERIMENT_FOLDER):
     os.makedirs(EXPERIMENT_FOLDER)
@@ -79,7 +80,7 @@ test_dataloader = DataLoader(dataset2, batch_size=1)
 
 model_iteration = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if not os.path.exists(f"model{model_iteration}.pth"):
+if not os.path.exists(os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.pth")):
     model = NetV2(num_masks=NUM_MASKS, dropout_probs=dropout_probs).to(device)
     opt = Adam(model.parameters(), lr=LR)
     lossFn = torch.nn.NLLLoss() # Use NLL since we our model is outputting a probability
@@ -90,8 +91,7 @@ model_iteration += 1
 train_accuracies_before_prune = []
 train_losses_before_prune = []
 
-if not os.path.exists(f"model{model_iteration}.pth"):
-    NGROUPS = 10 # dividing groups to use
+if not os.path.exists(os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.pth")):
     mask_groups = [list(range(i, NUM_MASKS, NGROUPS)) for i in range(NGROUPS)]  # Partition masks
 
     for epoch in range(EPOCHS):
@@ -121,7 +121,6 @@ if not os.path.exists(f"model{model_iteration}.pth"):
         train_losses_before_prune.append(totalLoss)
     torch.save(model.state_dict(), os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.pth"))
 
-
 model_iteration += 1
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -131,6 +130,7 @@ model.eval()
 for idx, (x, y)  in (enumerate(test_dataloader)):
     # logits2 = model.forward(x, mask=1)
     x, y = x.to(device), y.to(device)
+
     logits = model.forward(x, mask=0)
     pred = torch.argmax(logits, dim=1)
     test_correct += (pred == y).sum().item()
@@ -157,7 +157,9 @@ dropout_layers = {
     'fc1': model.dropout2,
 }
 
+
 nisp = NISP(model, dropout_dict=dropout_layers, resize_dict=reshape_layers)
+
 importance_scores = nisp.compute_aggregated_importance_scores()
 
 
