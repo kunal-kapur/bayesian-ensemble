@@ -261,15 +261,16 @@ class NISP:
         Returns:
             torch.Tensor: Binary mask with 1s for kept neurons.
         """
+        
         scores = scores.squeeze()
         k = int(scores.numel() * (1 - pruning_rate))
         if k <= 0:
             return torch.zeros_like(scores, dtype=torch.bool)
-        
-        # Find threshold score to keep top-k
-        threshold = torch.kthvalue(scores, k).values
-        mask = scores >= threshold
 
+        # Get indices of the top-k scores (highest scores to keep)
+        topk_indices = torch.topk(scores, k).indices
+        mask = torch.zeros_like(scores, dtype=torch.bool)
+        mask[topk_indices] = True
         return mask
     
     def apply_nisp_pruning(self, model: nn.Module, layer_name: str, neuron_mask: torch.Tensor):
