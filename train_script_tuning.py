@@ -217,9 +217,9 @@ nisp.apply_nisp_pruning(model, 'fc1', fc1_mask)
 
 
 # pruning off weights
-prune.remove(model.conv1, 'weight')
-prune.remove(model.conv2, 'weight')
-prune.remove(model.fc1, 'weight')
+# prune.remove(model.conv1, 'weight')
+# prune.remove(model.conv2, 'weight')
+# prune.remove(model.fc1, 'weight')
 
 
 print("\n\nAfter pruning weights", flush=True)
@@ -277,6 +277,7 @@ if not os.path.exists(os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.p
         print(f"Total loss: {totalLoss}")
         train_accuracies_after_prune.append(acc)
         train_losses_after_prune.append(totalLoss)
+        
 
         model.eval()
         valCorrect = 0

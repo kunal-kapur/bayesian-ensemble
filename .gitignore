@@ -1,6 +1,11 @@
 
 archive/experiments/*
 
+retrain-*
+slurm* 
+analyze_experiment.py
+experiments/
+
 *.ipynb
 
 # Compiled source files

@@ -16,10 +16,12 @@ import os
 import time
 import csv
 import argparse
+import torchvision
+from resnet import ResNet18
 
 timestamp = time.strftime("%Y-%m-%d--%H-%M-%S")
 print("Timestamp", timestamp)
-EXPERIMENT_FOLDER = f"experiments/retrain-{timestamp}"
+EXPERIMENT_FOLDER = f"retrain-{timestamp}"
 if not os.path.exists(EXPERIMENT_FOLDER):
     os.makedirs(EXPERIMENT_FOLDER)
 
@@ -36,10 +38,26 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-dataset1 = datasets.MNIST('data', train=True, download=True,
-                       transform=transform)
-dataset2 = datasets.MNIST('data', train=False,
-                       transform=transform)
+print('==> Preparing data..')
+transform_train = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+])
+
+transform_test = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+])
+
+dataset1 = datasets.CIFAR10(
+    root='./data', train=True, download=True, transform=transform_train)
+
+dataset2 = datasets.CIFAR10(
+    root='./data', train=False, download=True, transform=transform_test)
+
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', "--epochs", type=int, default=12, help="Number of training epochs")    
@@ -82,7 +100,7 @@ test_dataloader = DataLoader(dataset2, batch_size=1)
 model_iteration = 0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if not os.path.exists(os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.pth")):
-    model = NetV2(num_masks=NUM_MASKS, dropout_probs=dropout_probs).to(device)
+    model = ResNet18(dropout_probs=dropout_probs).to(device)
     opt = Adam(model.parameters(), lr=LR)
     lossFn = torch.nn.NLLLoss() # Use NLL since we our model is outputting a probability
     torch.save(model.state_dict(), os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.pth"))
@@ -102,7 +120,7 @@ if not os.path.exists(os.path.join(EXPERIMENT_FOLDER, f"model{model_iteration}.p
         trainCorrect = 0
         totalLoss = 0
         tot = 0
-        for idx, (x, y) in (enumerate(train_dataloader)):
+        for idx, (x, y) in tqdm(enumerate(train_dataloader)):
             x, y = x.to(device), y.to(device)
             group_id = idx % NGROUPS  # Assign batch to a group
             masks = mask_groups[group_id]  # Get all masks in this group

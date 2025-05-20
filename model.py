@@ -232,6 +232,7 @@ class MCMC:
         self.previous = 1
         self.dist = None
         self.calculated = False
+        self.recalculate_dist()
 
     def recalculate_dist(self):
         """calculates the distriubtion of probabilities of each mask
@@ -320,4 +321,4 @@ class MCMC:
         predictions = [self.model.forward(x, mask=(m)) * chosen_dist[m] for m in range(self.num_masks)]
         prob_tensor = torch.stack(predictions, dim=0)
         return torch.sum(prob_tensor, dim=0)
-		
+    
