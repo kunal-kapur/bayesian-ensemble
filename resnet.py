@@ -11,12 +11,13 @@ from model import ConsistentMCDropout
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import prune
 
 
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1, dropout_probs=[0.0, 0.0]):
+    def __init__(self, in_planes, planes, stride=1, dropout_prob=0.0):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -25,57 +26,84 @@ class BasicBlock(nn.Module):
                                stride=1, padding=1, bias=False)
         # self.bn2 = nn.BatchNorm2d(planes)
 
-        self.shortcut = nn.Sequential()
+        self.shortcut_active = False
+        self.shortcut_lauyer = None
+        self.dropout_shortcut = None
         if stride != 1 or in_planes != self.expansion*planes:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion*planes,
-                          kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(self.expansion*planes)
-            )
-        self.dropout1 = ConsistentMCDropout(dropout_probs[0])
-        self.dropout2 = ConsistentMCDropout(dropout_probs[1])
+            self.shortcut_active = True
+            self.shortcut_layer = nn.Conv2d(in_planes, self.expansion*planes,
+                          kernel_size=1, stride=stride, bias=False)
+            self.dropout_shortcut = ConsistentMCDropout(dropout_prob)
+        self.dropout1 = ConsistentMCDropout(dropout_prob)
+        self.dropout2 = ConsistentMCDropout(dropout_prob)
 
-        self.mask_importance_dict = {}
+        self.layer_importance_dict = {"conv1": {}, "conv2": {}, "shortcut": {}}
 
-    def forward(self, x):
-        out = F.relu((self.conv1(x)))
-        # out = self.bn2(self.conv2(out))
+
+
+    def forward(self, x, mask):
+        out = F.relu(self.conv1(x))
         out = self.conv2(out)
-        out = self.dropout1(out)
-        out += self.shortcut(x)
+        out = self.dropout1(out, mask=mask)
+        if self.shortcut_active:
+            shortcut_out = self.dropout_shortcut(self.shortcut_layer(x), mask=mask)
+            out = shortcut_out + out
+        else:
+            out = x + out
         out = F.relu(out)
-        out = self.dropout2(out)
+        out = self.dropout2(out, mask=mask)
         return out
 
-    def propogate_importance_score(self, prev_importance_score, prev_weights, mask):
+    def propagate_importance_score(self, prev_scores, prev_weights, mask):
         # Importance from conv2 and dropout2
-        last_mask = self.dropout2.mask_dict[mask].squeeze(dim=0)
-        weights2 = self.conv2.weight  # [out_channels, in_channels, kH, kW]
-        out_channels, in_channels, kH, kW = weights2.shape
-        weights2_flat = weights2.sum(dim=(2, 3))  # [out_channels, in_channels]
-        masked_scores = (prev_importance_score * last_mask).squeeze()
-        conv2_input_scores_flat = torch.matmul(torch.abs(weights2_flat.T), masked_scores)
-        conv2_input_scores = conv2_input_scores_flat.view(in_channels, 1, 1)
+        conv2_input_scores = torch.zeros_like(prev_scores[0])
+        for i in range(len(prev_scores)):
+            dropout2_mask = self.dropout2.mask_dict[mask].squeeze(dim=0)
+            conv2_weights = self.conv2.weight
 
-        self.mask_importance_dict[mask] = conv2_input_scores
+            out_channels, in_channels, kH, kW = prev_weights[i].shape
+            masked_scores = (prev_scores[i] * dropout2_mask).squeeze()
+            conv2_input_scores_flat = torch.matmul(torch.abs(prev_weights[i].T), masked_scores)
+            conv2_input_scores = conv2_input_scores_flat.view(in_channels, 1, 1)
 
-        weights1 = self.conv1.weight  
-        weights1_flat = weights1.sum(dim=(2, 3))
-        conv1_input_scores_flat = torch.matmul(torch.abs(weights1_flat.T), conv2_input_scores.squeeze())
-        conv1_input_scores = conv1_input_scores_flat.view(weights1.shape[1], 1, 1)
+            if self.shortcut_active:
+                shortcut_mask = self.dropout_shortcut.mask_dict[mask].squeeze(dim=0)
+                shortcut_weights = self.shortcut_layer.weight
+                out_channels, in_channels, kH, kW = shortcut_weights.shape
+                masked_scores = (prev_scores[i] * shortcut_mask).squeeze()
+                shortcut_input_scores_flat = torch.matmul(torch.abs(shortcut_weights.T), masked_scores)
+                shortcut_input_scores = shortcut_input_scores_flat.view(in_channels, 1, 1)
 
-        if len(self.shortcut) > 0:
-            shortcut_conv = self.shortcut[0]
-            shortcut_weights = shortcut_conv.weight 
-            shortcut_weights_flat = shortcut_weights.sum(dim=(2, 3)) 
-            shortcut_input_scores_flat = torch.matmul(torch.abs(shortcut_weights_flat.T), masked_scores)
-            shortcut_input_scores = shortcut_input_scores_flat.view(shortcut_weights.shape[1], 1, 1)
-        else:
-            shortcut_input_scores = masked_scores.view(in_channels, 1, 1)
+        dropout1_mask = self.dropout1.mask_dict[mask].squeeze(dim=0)
+        out_channels, in_channels, kH, kW = conv2_weights.shape
+        masked_scores = (conv2_input_scores * dropout1_mask).squeeze()
+        conv1_input_scores_flat = torch.matmul(torch.abs(conv2_weights.T), masked_scores)
+        conv1_input_scores = conv1_input_scores_flat.view(in_channels, 1, 1)
 
-        total_input_scores = conv1_input_scores + shortcut_input_scores
+        self.layer_importance_dict['conv2_input_scores'][mask] = (conv2_input_scores)
+        self.layer_importance_dict['conv1_input_scores'][mask] = (conv1_input_scores)
+        self.layer_importance_dict['shortcut_input_scores'][mask] = (shortcut_input_scores)
 
-        return total_input_scores
+        return [conv1_input_scores, shortcut_input_scores], [self.conv1.weight, self.shortcut_layer.weight]
+    
+    def prune(self, threshold):
+        aggregated_scores = {}
+        for layer, scores_dict in self.layer_importance_dict.items():
+            for mask, scores in scores_dict.items():
+                if layer not in aggregated_scores:
+                    aggregated_scores[layer] = scores.clone()
+                else:
+                    aggregated_scores[layer] += scores
+            aggregated_scores[layer] /= len(scores_dict)
+
+        for layer, scores in aggregated_scores.items():
+            mask = scores < threshold
+            if layer == "conv1":
+                self.conv1.weight.data = prune.CustomFromMask.apply(self.conv1.weight.data, mask)
+            elif layer == "conv2":
+                self.conv2.weight.data = prune.CustomFromMask.apply(self.conv2.weight.data, mask)
+            elif layer == "shortcut" and self.shortcut_active:
+                self.shortcut_layer.weight.data = prune.CustomFromMask.apply(self.shortcut_layer.weight.data, mask)
 
 
 class ResNet(nn.Module):
